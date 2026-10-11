@@ -30,8 +30,10 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
       | 'filterOlder90'
       | 'filteredCount'
       | 'timeFilterHint'
-      | 'showArchived'
-      | 'showArchivedHint'
+      | 'archivedFilterAll'
+      | 'archivedFilterHide'
+      | 'archivedFilterOnly'
+      | 'archivedFilterHint'
       | 'trashTitle'
       | 'trashEmpty'
       | 'trashUnavailable'
@@ -101,8 +103,10 @@ export const en: LocaleDictOf<typeof NS> = {
   filterOlder90: 'Older than 90 days',
   filteredCount: '{count} matching',
   timeFilterHint: 'Keep only conversations whose last activity is older than this',
-  showArchived: 'Show archived',
-  showArchivedHint: 'Applies to the table below only — search results always show every match, archived or not.',
+  archivedFilterAll: 'All conversations (show archived)',
+  archivedFilterHide: 'Hide archived',
+  archivedFilterOnly: 'Archived only',
+  archivedFilterHint: 'The same three choices as the DSH sidebar "Filter sessions": all / hide archived / archived only. Applies to the table below only — search results always show every match, archived or not.',
   trashTitle: 'Recycle bin: {count} batch(es)',
   trashEmpty: 'Recycle bin: empty',
   trashUnavailable: 'Recycle bin: mirror unreadable ({message})',
@@ -174,8 +178,10 @@ export const zh: LocaleDictOf<typeof NS> = {
   filterOlder90: '90 天前的',
   filteredCount: '符合条件 {count} 个',
   timeFilterHint: '只保留最近活动早于该时间的会话',
-  showArchived: '显示已归档',
-  showArchivedHint: '只作用于下方总表；搜索结果不受它限制（搜到什么就显示什么）。',
+  archivedFilterAll: '全部对话（显示已归档）',
+  archivedFilterHide: '隐藏已归档',
+  archivedFilterOnly: '仅显示已归档',
+  archivedFilterHint: '与 DSH 侧栏「筛选会话」同样的三档：全部 / 隐藏已归档 / 仅显示已归档。只作用于下方总表；搜索结果不受它限制（搜到什么就显示什么）。',
   trashTitle: '回收站：{count} 批',
   trashEmpty: '回收站：空',
   trashUnavailable: '回收站：读不到镜像（{message}）',

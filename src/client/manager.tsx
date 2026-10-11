@@ -24,12 +24,20 @@ import { NS } from './locale.ts'
 export const TRASH_MIRROR_PATH = '.dsh-conversation-manager/trash.json'
 
 /**
- * 「显示已归档」开关的持久化键。
+ * 「筛选会话」的持久化键（与 DSH 侧栏同名功能对齐的三档）。
  *
  * 面板没有别的持久化通道（浏览器半没有文件权限），所以记住上一次的取舍只能靠
- * localStorage；它跨页签、跨重开都有效，取值就是 `'true'` / `'false'`。
+ * localStorage；它跨页签、跨重开都有效。
+ *
+ * 取值与**旧版的兼容**（这个键以前存的是布尔）：
+ *   `'all'` / `'true'`   → 全部对话（显示已归档）
+ *   `'hide'` / `'false'` → 隐藏已归档
+ *   `'only'`             → 仅显示已归档（新增档，旧版没有）
  */
-export const SHOW_ARCHIVED_KEY = 'dsh-conversation-manager/show-archived'
+export const ARCHIVED_FILTER_KEY = 'dsh-conversation-manager/show-archived'
+
+/** 归档行的显示档位（与 DSH 侧栏 `archivedFilter` 的 default/show/only 三档一一对应）。 */
+export type ArchivedFilter = 'all' | 'hide' | 'only'
 
 /** 操作结果（inject face 把宿主错误折叠成 JSON 结果，避免组件依赖 Remote 类型）。 */
 export interface ActionResult {
@@ -225,17 +233,21 @@ async function copyText(text: string): Promise<boolean> {
 }
 
 /**
- * 读「显示已归档」开关的上次取值。
+ * 读「筛选会话」的上次取值。
  *
- * 缺省（没存过、存储被禁用、读取出错）一律返回 `true`——保持本插件一直以来的
- * 默认行为：已归档的对话照样列出来，只是带「已归档」徽标。
+ * 缺省（没存过、存储被禁用、读取出错、取值不认识）一律返回 `'all'`——保持本插件
+ * 一直以来的默认行为：已归档的对话照样列出来，只是带「已归档」徽标。
+ * 旧版存的是布尔字符串，这里按 `'false' → 'hide'`、其余 `'all'` 迁移。
  */
-function readShowArchived(): boolean {
+function readArchivedFilter(): ArchivedFilter {
   try {
-    if (typeof window === 'undefined') return true
-    return window.localStorage.getItem(SHOW_ARCHIVED_KEY) !== 'false'
+    if (typeof window === 'undefined') return 'all'
+    const raw = window.localStorage.getItem(ARCHIVED_FILTER_KEY)
+    if (raw === 'only' || raw === 'hide' || raw === 'all') return raw
+    if (raw === 'false') return 'hide'
+    return 'all'
   } catch {
-    return true
+    return 'all'
   }
 }
 
@@ -301,14 +313,14 @@ export function ManagerBody(props: ManagerProps) {
   const [trashError, setTrashError] = useState<string | null>(null)
   const [trashBusy, setTrashBusy] = useState(false)
 
-  /* ── 「显示已归档」开关 ──
+  /* ── 「筛选会话」三档（与 DSH 侧栏对齐） ──
    * 只作用于下方总表：搜索结果**不跟着过滤**——搜到却看不见会被当成"搜索坏了"。
-   * 默认显示（与本插件历史行为一致）；选择记进 localStorage，面板重开后仍是上次的取舍。 */
-  const [showArchived, setShowArchivedState] = useState(readShowArchived)
-  const setShowArchived = (next: boolean) => {
-    setShowArchivedState(next)
+   * 默认「全部对话」（与本插件历史行为一致）；选择记进 localStorage，面板重开后仍是上次的取舍。 */
+  const [archivedFilter, setArchivedFilterState] = useState<ArchivedFilter>(readArchivedFilter)
+  const setArchivedFilter = (next: ArchivedFilter) => {
+    setArchivedFilterState(next)
     try {
-      window.localStorage.setItem(SHOW_ARCHIVED_KEY, String(next))
+      window.localStorage.setItem(ARCHIVED_FILTER_KEY, next)
     } catch {
       // 存不下只影响本次显示，不值得打断用户。
     }
@@ -470,7 +482,7 @@ export function ManagerBody(props: ManagerProps) {
     showNotice(ok ? t('copiedHitsHint', { count: hitRows.length }) : t('copyFailed'))
   }
 
-  /* 行汇总：非空白、非 subagent；再套时间筛选与「显示已归档」开关。 */
+  /* 行汇总：非空白、非 subagent；再套时间筛选与「筛选会话」三档。 */
   const rows = useMemo(() => {
     const byId = listState?.byId ?? {}
     const ids = listState?.ids ?? []
@@ -486,10 +498,11 @@ export function ManagerBody(props: ManagerProps) {
     const cutoff = olderThan === 0 ? 0 : now - olderThan * 86400000
     return out
       .filter(row => !row.blank && row.origin !== 'subagent')
-      .filter(row => showArchived || !archivedSet.has(row.id))
+      .filter(row => archivedFilter === 'all'
+        || (archivedFilter === 'only' ? archivedSet.has(row.id) : !archivedSet.has(row.id)))
       .filter(row => cutoff === 0 || (row.updatedAt ?? 0) < cutoff)
       .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
-  }, [listState, olderThan, now, showArchived, archivedSet])
+  }, [listState, olderThan, now, archivedFilter, archivedSet])
 
   /* 选择集合随可见行修剪。 */
   useEffect(() => {
@@ -630,17 +643,19 @@ export function ManagerBody(props: ManagerProps) {
             <option value="30">{t('filterOlder30')}</option>
             <option value="90">{t('filterOlder90')}</option>
           </select>
-          {(olderThan !== 0 || !showArchived) && (
+          {(olderThan !== 0 || archivedFilter !== 'all') && (
             <span className="dshm-badge">{t('filteredCount', { count: rows.length })}</span>
           )}
-          <label className="dshm-toggle" title={t('showArchivedHint')}>
-            <input
-              type="checkbox"
-              checked={showArchived}
-              onChange={(event) => setShowArchived(event.target.checked)}
-            />
-            {t('showArchived')}
-          </label>
+          <select
+            className="dshm-select"
+            value={archivedFilter}
+            onChange={(event) => setArchivedFilter(event.target.value as ArchivedFilter)}
+            title={t('archivedFilterHint')}
+          >
+            <option value="all">{t('archivedFilterAll')}</option>
+            <option value="hide">{t('archivedFilterHide')}</option>
+            <option value="only">{t('archivedFilterOnly')}</option>
+          </select>
           <label className="dshm-toggle">
             <input type="checkbox" checked={allChecked} onChange={toggleAll} />
             {t('selectAll')}

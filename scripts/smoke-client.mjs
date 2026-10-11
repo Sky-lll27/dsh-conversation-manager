@@ -14,7 +14,8 @@
  *   4. apply 真的注册了：页签类型（含 guide 条目）、正文/标题 keyed slot、
  *      左侧会话行菜单项、locale 中英字典、样式 effect；
  *   5. 正文组件**真的渲染一遍**（极简渲染器，不跑 effect），断言可观察到的面板行为——
- *      目前是「显示已归档」开关：关掉后已归档的行从总表消失、统计与开关状态如实反映。
+ *      目前是「筛选会话」三档下拉（与 DSH 侧栏对齐）：全部 / 隐藏已归档 / 仅显示已归档，
+ *      含旧版布尔取值的迁移与无法识别取值的回落。
  *
  * 用法：node scripts/smoke-client.mjs [产物路径]
  */
@@ -253,10 +254,19 @@ check('字典同时含 en 与 zh', dicts !== undefined && dicts.en !== undefined
 check('en 与 zh 键集合一致', dicts !== undefined
   && JSON.stringify(Object.keys(dicts.en).sort()) === JSON.stringify(Object.keys(dicts.zh).sort()))
 for (const lang of ['en', 'zh']) {
-  check(`${lang} 字典有「显示已归档」开关的文案（标签 + 说明）`, dicts !== undefined
-    && typeof dicts[lang]?.showArchived === 'string' && dicts[lang].showArchived.length > 0
-    && typeof dicts[lang]?.showArchivedHint === 'string' && dicts[lang].showArchivedHint.length > 0,
-  JSON.stringify({ showArchived: dicts?.[lang]?.showArchived, showArchivedHint: dicts?.[lang]?.showArchivedHint }))
+  check(`${lang} 字典有「筛选会话」三档的文案（三个档位 + 说明）`, dicts !== undefined
+    && typeof dicts[lang]?.archivedFilterAll === 'string' && dicts[lang].archivedFilterAll.length > 0
+    && typeof dicts[lang]?.archivedFilterHide === 'string' && dicts[lang].archivedFilterHide.length > 0
+    && typeof dicts[lang]?.archivedFilterOnly === 'string' && dicts[lang].archivedFilterOnly.length > 0
+    && typeof dicts[lang]?.archivedFilterHint === 'string' && dicts[lang].archivedFilterHint.length > 0,
+  JSON.stringify({
+    all: dicts?.[lang]?.archivedFilterAll,
+    hide: dicts?.[lang]?.archivedFilterHide,
+    only: dicts?.[lang]?.archivedFilterOnly,
+  }))
+  check(`${lang} 三个档位的文案互不相同`, dicts !== undefined
+    && new Set([dicts[lang]?.archivedFilterAll, dicts[lang]?.archivedFilterHide, dicts[lang]?.archivedFilterOnly]).size === 3,
+  JSON.stringify([dicts?.[lang]?.archivedFilterAll, dicts?.[lang]?.archivedFilterHide, dicts?.[lang]?.archivedFilterOnly]))
 }
 check('注册了样式 effect', recorded.effects.some(label => String(label).includes('styles')))
 
@@ -274,7 +284,7 @@ if (typeof probeRaw === 'string') {
   check('每条都有时间戳', log?.every(entry => typeof entry?.at === 'string'))
 }
 
-// ── 6. 面板行为：「显示已归档」开关 ────────────────────────────────────────
+// ── 6. 面板行为：「筛选会话」三档下拉 ──────────────────────────────────────
 /* 极简渲染器：把正文组件的 JSX 树摊平成宿主元素清单（元素 + 属性 + 其下文本）。
  * 只做三件事：函数组件按渲染路径分格存 hook 状态、Fragment 展开、其余原样收集。
  * 不跑 effect —— 所以这里不会有任何网络、定时器或未处理拒绝。 */
@@ -346,61 +356,106 @@ function panelFixture() {
     searchContent: async () => ({ ok: true, hits: [], hasMore: false }),
   }
 }
-const SHOW_ARCHIVED_KEY = 'dsh-conversation-manager/show-archived'
+const ARCHIVED_FILTER_KEY = 'dsh-conversation-manager/show-archived'
 /** 只取总表数据行（表头的 tr 没有 dshm-row 类名）。 */
 const dataRows = host => host.filter(node => typeof node.props?.className === 'string' && node.props.className.includes('dshm-row'))
 const rowTitles = host => dataRows(host).map(node => node.text)
-/** 找到「显示已归档」开关：靠文案定位标签，再取它里面的那个勾选框。 */
-function archivedToggle(host) {
-  const label = host.find(node => node.type === 'label' && node.text.includes('showArchived'))
-  if (label === undefined) return undefined
-  const children = Array.isArray(label.props?.children) ? label.props?.children : [label.props?.children]
-  return { label, input: children.find(child => child !== null && typeof child === 'object' && child.type === 'input') }
+/** 找到「筛选会话」三档下拉：靠它的说明文案（title）定位，再读/写它的取值。 */
+function archivedSelect(host) {
+  return host.find(node => node.type === 'select' && node.props?.title === 'archivedFilterHint')
+}
+/** 下拉里三个档位的 value 列表（顺序即渲染顺序）。 */
+function archivedOptions(host) {
+  const children = archivedSelect(host)?.props?.children
+  const list = Array.isArray(children) ? children : children === undefined ? [] : [children]
+  return list.map(option => option?.props?.value).filter(value => typeof value === 'string')
+}
+/** 把下拉切到某一档（等于用户在下拉里点了一下）。 */
+function pickArchivedFilter(host, value) {
+  archivedSelect(host)?.props?.onChange({ target: { value } })
 }
 const badgeText = (host, prefix) => host.find(node => node.type === 'span' && node.text.startsWith(prefix))?.text
 
-// 6.1 没存过取值 = 默认显示（本插件一直以来的行为）。
-storage.delete(SHOW_ARCHIVED_KEY)
+// 6.1 没存过取值 = 默认「全部对话」（本插件一直以来的行为）。
+storage.delete(ARCHIVED_FILTER_KEY)
 {
   const host = renderPanel(panelFixture())
   check('默认把已归档的行也列出来', rowTitles(host).length === 2
     && rowTitles(host).some(text => text.includes('示例对话（已归档）')), JSON.stringify(rowTitles(host)))
-  check('「显示已归档」开关默认是勾选的', archivedToggle(host)?.input?.props?.checked === true)
-  check('开关挂着说明（搜索结果不受它限制）', archivedToggle(host)?.label?.props?.title === 'showArchivedHint',
-    String(archivedToggle(host)?.label?.props?.title))
-  check('时间筛选未开、归档未隐藏时不出「符合条件」徽标',
+  check('三档下拉默认停在「全部对话」', archivedSelect(host)?.props?.value === 'all',
+    String(archivedSelect(host)?.props?.value))
+  check('下拉恰好提供三档：全部 / 隐藏已归档 / 仅显示已归档',
+    JSON.stringify(archivedOptions(host)) === JSON.stringify(['all', 'hide', 'only']), JSON.stringify(archivedOptions(host)))
+  check('下拉挂着说明（与侧栏同名功能对齐、搜索结果不受它限制）',
+    archivedSelect(host)?.props?.title === 'archivedFilterHint', String(archivedSelect(host)?.props?.title))
+  check('时间筛选未开、档位为「全部」时不出「符合条件」徽标',
     badgeText(host, 'filteredCount=') === undefined, String(badgeText(host, 'filteredCount=')))
 }
 
-// 6.2 存了 'false' = 打开面板就是隐藏的。
-storage.set(SHOW_ARCHIVED_KEY, 'false')
+// 6.2 旧版存过 'false'（布尔）→ 迁移成「隐藏已归档」。
+storage.set(ARCHIVED_FILTER_KEY, 'false')
 {
   const host = renderPanel(panelFixture())
   const titles = rowTitles(host)
-  check('开关关掉后已归档的行从总表消失', titles.length === 1 && titles[0].includes('示例对话（未归档）'), JSON.stringify(titles))
-  check('未归档的行照常保留', titles.some(text => text.includes('示例对话（未归档）')), JSON.stringify(titles))
-  check('开关如实反映存储里的取值（未勾选）', archivedToggle(host)?.input?.props?.checked === false)
-  check('顶部统计仍如实报告 1 个已归档（统计不跟着隐藏）',
+  check('旧值 \'false\' 迁移为「隐藏已归档」：已归档的行从总表消失',
+    titles.length === 1 && titles[0].includes('示例对话（未归档）'), JSON.stringify(titles))
+  check('迁移后下拉如实显示在「隐藏已归档」档', archivedSelect(host)?.props?.value === 'hide',
+    String(archivedSelect(host)?.props?.value))
+  check('顶部统计仍如实报告 1 个已归档（统计不跟着筛选）',
     badgeText(host, 'statsLine=')?.includes('"archived":1') === true, String(badgeText(host, 'statsLine=')))
   check('隐藏后补出当前可见条数徽标', badgeText(host, 'filteredCount=')?.includes('"count":1') === true,
     String(badgeText(host, 'filteredCount=')))
 }
 
-// 6.3 点一下切换，并把取值写进 localStorage（面板重开后仍是这个取舍）。
-storage.set(SHOW_ARCHIVED_KEY, 'false')
+// 6.3 旧版存过 'true' → 迁移成「全部对话」。
+storage.set(ARCHIVED_FILTER_KEY, 'true')
+{
+  const host = renderPanel(panelFixture())
+  check('旧值 \'true\' 迁移为「全部对话」：两行都在', rowTitles(host).length === 2, JSON.stringify(rowTitles(host)))
+  check('迁移后下拉停在「全部对话」档', archivedSelect(host)?.props?.value === 'all',
+    String(archivedSelect(host)?.props?.value))
+}
+
+// 6.4 新增档「仅显示已归档」：总表里只剩已归档的行。
+storage.set(ARCHIVED_FILTER_KEY, 'only')
+{
+  const host = renderPanel(panelFixture())
+  const titles = rowTitles(host)
+  check('「仅显示已归档」：总表里只剩已归档的那一行',
+    titles.length === 1 && titles[0].includes('示例对话（已归档）'), JSON.stringify(titles))
+  check('未归档的行在该档下不出现', !titles.some(text => text.includes('示例对话（未归档）')), JSON.stringify(titles))
+  check('该档同样补出可见条数徽标', badgeText(host, 'filteredCount=')?.includes('"count":1') === true,
+    String(badgeText(host, 'filteredCount=')))
+}
+
+// 6.5 换档：把取值写进 localStorage（面板重开后仍是这个取舍），且不认识的取值回落到「全部」。
+storage.set(ARCHIVED_FILTER_KEY, 'all')
 {
   const props = panelFixture()
-  const path = 'panel-toggle'
-  check('切换前：已归档的行是隐藏的', rowTitles(renderPanel(props, path)).length === 1)
-  archivedToggle(renderPanel(props, path))?.input?.props?.onChange({ target: { checked: true } })
-  const opened = renderPanel(props, path)
-  check('点一下开关：已归档的行回来了', rowTitles(opened).length === 2, JSON.stringify(rowTitles(opened)))
-  check('开关变成勾选', archivedToggle(opened)?.input?.props?.checked === true)
-  check('取值写进了 localStorage', storage.get(SHOW_ARCHIVED_KEY) === 'true', String(storage.get(SHOW_ARCHIVED_KEY)))
-  archivedToggle(opened)?.input?.props?.onChange({ target: { checked: false } })
-  const closed = renderPanel(props, path)
-  check('再点一下：已归档的行又隐藏了', rowTitles(closed).length === 1, JSON.stringify(rowTitles(closed)))
-  check('隐藏的取值同样被记住', storage.get(SHOW_ARCHIVED_KEY) === 'false', String(storage.get(SHOW_ARCHIVED_KEY)))
+  const path = 'panel-archived-filter'
+  check('切换前：两行都在', rowTitles(renderPanel(props, path)).length === 2)
+  pickArchivedFilter(renderPanel(props, path), 'only')
+  const only = renderPanel(props, path)
+  check('切到「仅显示已归档」：只剩已归档的行', rowTitles(only).length === 1
+    && rowTitles(only)[0].includes('示例对话（已归档）'), JSON.stringify(rowTitles(only)))
+  check('取值写进了 localStorage', storage.get(ARCHIVED_FILTER_KEY) === 'only', String(storage.get(ARCHIVED_FILTER_KEY)))
+  pickArchivedFilter(only, 'hide')
+  const hidden = renderPanel(props, path)
+  check('切到「隐藏已归档」：只剩未归档的行', rowTitles(hidden).length === 1
+    && rowTitles(hidden)[0].includes('示例对话（未归档）'), JSON.stringify(rowTitles(hidden)))
+  check('取值同样被记住', storage.get(ARCHIVED_FILTER_KEY) === 'hide', String(storage.get(ARCHIVED_FILTER_KEY)))
+  pickArchivedFilter(hidden, 'all')
+  const all = renderPanel(props, path)
+  check('切回「全部对话」：两行都回来', rowTitles(all).length === 2, JSON.stringify(rowTitles(all)))
+  check('回落后取值也是 all', storage.get(ARCHIVED_FILTER_KEY) === 'all', String(storage.get(ARCHIVED_FILTER_KEY)))
+}
+
+// 6.6 存了不认识的取值 → 回落到默认的「全部对话」，不能白屏或空表。
+storage.set(ARCHIVED_FILTER_KEY, 'nonsense')
+{
+  const host = renderPanel(panelFixture())
+  check('无法识别的存储取值回落到「全部对话」', archivedSelect(host)?.props?.value === 'all'
+    && rowTitles(host).length === 2, `${String(archivedSelect(host)?.props?.value)} / ${JSON.stringify(rowTitles(host))}`)
 }
 
 // ── 报告 ────────────────────────────────────────────────────────────────────

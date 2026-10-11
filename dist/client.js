@@ -29,8 +29,10 @@ window.__ModuleLoader__.load({
 			filterOlder90: "Older than 90 days",
 			filteredCount: "{count} matching",
 			timeFilterHint: "Keep only conversations whose last activity is older than this",
-			showArchived: "Show archived",
-			showArchivedHint: "Applies to the table below only — search results always show every match, archived or not.",
+			archivedFilterAll: "All conversations (show archived)",
+			archivedFilterHide: "Hide archived",
+			archivedFilterOnly: "Archived only",
+			archivedFilterHint: "The same three choices as the DSH sidebar \"Filter sessions\": all / hide archived / archived only. Applies to the table below only — search results always show every match, archived or not.",
 			trashTitle: "Recycle bin: {count} batch(es)",
 			trashEmpty: "Recycle bin: empty",
 			trashUnavailable: "Recycle bin: mirror unreadable ({message})",
@@ -101,8 +103,10 @@ window.__ModuleLoader__.load({
 			filterOlder90: "90 天前的",
 			filteredCount: "符合条件 {count} 个",
 			timeFilterHint: "只保留最近活动早于该时间的会话",
-			showArchived: "显示已归档",
-			showArchivedHint: "只作用于下方总表；搜索结果不受它限制（搜到什么就显示什么）。",
+			archivedFilterAll: "全部对话（显示已归档）",
+			archivedFilterHide: "隐藏已归档",
+			archivedFilterOnly: "仅显示已归档",
+			archivedFilterHint: "与 DSH 侧栏「筛选会话」同样的三档：全部 / 隐藏已归档 / 仅显示已归档。只作用于下方总表；搜索结果不受它限制（搜到什么就显示什么）。",
 			trashTitle: "回收站：{count} 批",
 			trashEmpty: "回收站：空",
 			trashUnavailable: "回收站：读不到镜像（{message}）",
@@ -542,12 +546,17 @@ window.__ModuleLoader__.load({
 		/** 回收站镜像在工作区里的相对路径。宿主半的 `lib/trash-mirror.js` 写它，两边必须一致。 */
 		const TRASH_MIRROR_PATH = ".dsh-conversation-manager/trash.json";
 		/**
-		* 「显示已归档」开关的持久化键。
+		* 「筛选会话」的持久化键（与 DSH 侧栏同名功能对齐的三档）。
 		*
 		* 面板没有别的持久化通道（浏览器半没有文件权限），所以记住上一次的取舍只能靠
-		* localStorage；它跨页签、跨重开都有效，取值就是 `'true'` / `'false'`。
+		* localStorage；它跨页签、跨重开都有效。
+		*
+		* 取值与**旧版的兼容**（这个键以前存的是布尔）：
+		*   `'all'` / `'true'`   → 全部对话（显示已归档）
+		*   `'hide'` / `'false'` → 隐藏已归档
+		*   `'only'`             → 仅显示已归档（新增档，旧版没有）
 		*/
-		const SHOW_ARCHIVED_KEY = "dsh-conversation-manager/show-archived";
+		const ARCHIVED_FILTER_KEY = "dsh-conversation-manager/show-archived";
 		/** 相对时间文案。用 any 收口，避免与实际 t 的泛型签名冲突。 */
 		function relativeTime(ts, now, t) {
 			if (!ts || ts <= 0) return "";
@@ -621,17 +630,21 @@ window.__ModuleLoader__.load({
 			}
 		}
 		/**
-		* 读「显示已归档」开关的上次取值。
+		* 读「筛选会话」的上次取值。
 		*
-		* 缺省（没存过、存储被禁用、读取出错）一律返回 `true`——保持本插件一直以来的
-		* 默认行为：已归档的对话照样列出来，只是带「已归档」徽标。
+		* 缺省（没存过、存储被禁用、读取出错、取值不认识）一律返回 `'all'`——保持本插件
+		* 一直以来的默认行为：已归档的对话照样列出来，只是带「已归档」徽标。
+		* 旧版存的是布尔字符串，这里按 `'false' → 'hide'`、其余 `'all'` 迁移。
 		*/
-		function readShowArchived() {
+		function readArchivedFilter() {
 			try {
-				if (typeof window === "undefined") return true;
-				return window.localStorage.getItem(SHOW_ARCHIVED_KEY) !== "false";
+				if (typeof window === "undefined") return "all";
+				const raw = window.localStorage.getItem(ARCHIVED_FILTER_KEY);
+				if (raw === "only" || raw === "hide" || raw === "all") return raw;
+				if (raw === "false") return "hide";
+				return "all";
 			} catch {
-				return true;
+				return "all";
 			}
 		}
 		/**
@@ -687,11 +700,11 @@ window.__ModuleLoader__.load({
 			const [trash, setTrash] = (0, react.useState)(null);
 			const [trashError, setTrashError] = (0, react.useState)(null);
 			const [trashBusy, setTrashBusy] = (0, react.useState)(false);
-			const [showArchived, setShowArchivedState] = (0, react.useState)(readShowArchived);
-			const setShowArchived = (next) => {
-				setShowArchivedState(next);
+			const [archivedFilter, setArchivedFilterState] = (0, react.useState)(readArchivedFilter);
+			const setArchivedFilter = (next) => {
+				setArchivedFilterState(next);
 				try {
-					window.localStorage.setItem(SHOW_ARCHIVED_KEY, String(next));
+					window.localStorage.setItem(ARCHIVED_FILTER_KEY, next);
 				} catch {}
 			};
 			const [query, setQuery] = (0, react.useState)("");
@@ -850,12 +863,12 @@ window.__ModuleLoader__.load({
 				for (const id of ids) add(byId[id]);
 				for (const row of Object.values(byId)) add(row);
 				const cutoff = olderThan === 0 ? 0 : now - olderThan * 864e5;
-				return out.filter((row) => !row.blank && row.origin !== "subagent").filter((row) => showArchived || !archivedSet.has(row.id)).filter((row) => cutoff === 0 || (row.updatedAt ?? 0) < cutoff).sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+				return out.filter((row) => !row.blank && row.origin !== "subagent").filter((row) => archivedFilter === "all" || (archivedFilter === "only" ? archivedSet.has(row.id) : !archivedSet.has(row.id))).filter((row) => cutoff === 0 || (row.updatedAt ?? 0) < cutoff).sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
 			}, [
 				listState,
 				olderThan,
 				now,
-				showArchived,
+				archivedFilter,
 				archivedSet
 			]);
 			(0, react.useEffect)(() => {
@@ -999,18 +1012,29 @@ window.__ModuleLoader__.load({
 											})
 										]
 									}),
-									(olderThan !== 0 || !showArchived) && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+									(olderThan !== 0 || archivedFilter !== "all") && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 										className: "dshm-badge",
 										children: t("filteredCount", { count: rows.length })
 									}),
-									/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
-										className: "dshm-toggle",
-										title: t("showArchivedHint"),
-										children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
-											type: "checkbox",
-											checked: showArchived,
-											onChange: (event) => setShowArchived(event.target.checked)
-										}), t("showArchived")]
+									/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("select", {
+										className: "dshm-select",
+										value: archivedFilter,
+										onChange: (event) => setArchivedFilter(event.target.value),
+										title: t("archivedFilterHint"),
+										children: [
+											/* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+												value: "all",
+												children: t("archivedFilterAll")
+											}),
+											/* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+												value: "hide",
+												children: t("archivedFilterHide")
+											}),
+											/* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+												value: "only",
+												children: t("archivedFilterOnly")
+											})
+										]
 									}),
 									/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
 										className: "dshm-toggle",
