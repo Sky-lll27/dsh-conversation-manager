@@ -17,6 +17,20 @@
 > 第三方社区插件，与 DeepSeek 官方无关。代码由作者与 AI 助手协作完成，
 > 详见文末「关于作者与 AI 协作」一节。
 
+## 兼容性
+
+| 项 | 值 |
+| --- | --- |
+| 实测 DSH | **0.2.1-rc.5**（`@deepseek-ai/dsh-desktop` / `dsh-desktop-runtime`） |
+| cordis | 4.0.5（`peerDependencies` 声明 `^4.0.4`） |
+| 客户端注入包 | 8 个全部存在：`dsh-api-session-controller`、`dsh-api-workspace-controller`、`dsh-api-workspace-files`、`dsh-client-locale`、`dsh-client-ui-conversation`、`dsh-client-ui-session`、`dsh-client-ui-workspace`、`dsh-client-ui-sidebar-right` |
+| 宿主半自检 | `pnpm run check` 通过；`pnpm test` **89 项全过** |
+| 浏览器半自检 | `pnpm run check:client` **75/75 通过**（产物契约 + 平台模块纯度门 + 契约冒烟） |
+| 运行时实测 | 在 0.2.1-rc.5 宿主上加载并调用成功（`conversation_list` 正常返回会话列表） |
+
+DSH 升级后若面板或工具异常，先跑 `pnpm test` 与 `pnpm run check:client` 定位：两者都过，
+说明本插件的契约没漂移，问题在宿主侧的变化。
+
 ## 它解决什么问题
 
 DSH 自带的侧栏已经能搜索、置顶、改名、分叉、归档 —— 这些本插件**刻意都不重复**。
